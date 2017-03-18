@@ -15,8 +15,6 @@
  */
 package org.powermock.core.classloader;
 
-import javassist.Loader;
-import org.powermock.core.WildcardMatcher;
 import org.powermock.reflect.Whitebox;
 
 import java.io.IOException;
@@ -32,34 +30,62 @@ import java.util.concurrent.ConcurrentMap;
  *
  * @author Johan Haleby
  * @author Jan Kronquist
+ * @author Arthur Zagretdinov
  */
-public abstract class DeferSupportingClassLoader extends Loader {
+abstract class DeferSupportingClassLoader extends ClassLoader {
     private final ConcurrentMap<String, SoftReference<Class<?>>> classes;
-
-    String[] deferPackages;
-
+    
+    private final MockClassLoaderConfiguration configuration;
     ClassLoader deferTo;
 
-    public void addIgnorePackage(String... packagesToIgnore) {
-        if (packagesToIgnore != null && packagesToIgnore.length > 0) {
-            final int previousLength = deferPackages.length;
-            String[] newDeferPackages = new String[previousLength + packagesToIgnore.length];
-            System.arraycopy(deferPackages, 0, newDeferPackages, 0, previousLength);
-            System.arraycopy(packagesToIgnore, 0, newDeferPackages, previousLength, packagesToIgnore.length);
-            deferPackages = newDeferPackages;
-        }
-    }
-
-    DeferSupportingClassLoader(ClassLoader classloader, String deferPackages[]) {
+    DeferSupportingClassLoader(ClassLoader classloader, MockClassLoaderConfiguration configuration) {
+        
+        this.configuration = configuration;
+        this.classes = new ConcurrentHashMap<String, SoftReference<Class<?>>>();
+        
         if (classloader == null) {
             deferTo = ClassLoader.getSystemClassLoader();
         } else {
             deferTo = classloader;
         }
-        classes = new ConcurrentHashMap<String, SoftReference<Class<?>>>();
-        this.deferPackages = deferPackages;
     }
 
+    @Override
+    public URL getResource(String s) {
+        return deferTo.getResource(s);
+    }
+    
+    @Override
+    public InputStream getResourceAsStream(String s) {
+        return deferTo.getResourceAsStream(s);
+    }
+    
+    @Override
+    public Enumeration<URL> getResources(String name) throws IOException {
+        // If deferTo is already the parent, then we'd end up returning two copies of each resource...
+        if (deferTo.equals(getParent())) {
+            return deferTo.getResources(name);
+        }
+        else {
+            return super.getResources(name);
+        }
+    }
+    
+    public MockClassLoaderConfiguration getConfiguration() {
+        return configuration;
+    }
+    
+    /**
+     * Register a class to the cache of this classloader
+     */
+    public void cache(Class<?> cls) {
+        if (cls != null) {
+            classes.put(cls.getName(), new SoftReference<Class<?>>(cls));
+        }
+    }
+    
+    protected abstract Class<?> loadModifiedClass(String s) throws ClassFormatError, ClassNotFoundException;
+    
     @Override
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
         Class<?> clazz = findLoadedClass1(name);
@@ -68,64 +94,7 @@ public abstract class DeferSupportingClassLoader extends Loader {
         }
         return clazz;
     }
-
-    private Class<?> loadClass1(String name, boolean resolve) throws ClassNotFoundException {
-        Class<?> clazz;
-        if (shouldDefer(deferPackages, name)) {
-            clazz = deferTo.loadClass(name);
-        } else {
-            clazz = loadModifiedClass(name);
-        }
-        if (resolve) {
-            resolveClass(clazz);
-        }
-        classes.put(name, new SoftReference<Class<?>>(clazz));
-        return clazz;
-    }
-
-    private Class<?> findLoadedClass1(String name) {SoftReference<Class<?>> reference = classes.get(name);
-        Class<?> clazz = null;
-        if (reference != null) {
-           clazz = reference.get();
-        }
-        if (clazz == null) {
-            clazz = findLoadedClass(name);
-        }
-        return clazz;
-    }
-
-    boolean shouldDefer(String[] packages, String name) {
-        for (String packageToCheck : packages) {
-            if (deferConditionMatches(name, packageToCheck)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean deferConditionMatches(String name, String packageName) {
-        final boolean wildcardMatch = WildcardMatcher.matches(name, packageName);
-        return wildcardMatch && !(shouldLoadUnmodifiedClass(name) || shouldModifyClass(name));
-    }
-
-    private boolean shouldIgnore(Iterable<String> packages, String name) {
-        for (String ignore : packages) {
-            if (WildcardMatcher.matches(ignore, name)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    boolean shouldIgnore(String[] packages, String name) {
-        for (String ignore : packages) {
-            if (WildcardMatcher.matches(name, ignore)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
+    
     /**
      * Finds the resource with the specified name on the search path.
      *
@@ -141,7 +110,8 @@ public abstract class DeferSupportingClassLoader extends Loader {
             throw new RuntimeException(e);
         }
     }
-
+    
+    
     @Override
     protected Enumeration<URL> findResources(String name) throws IOException {
         try {
@@ -150,42 +120,33 @@ public abstract class DeferSupportingClassLoader extends Loader {
             throw new RuntimeException(e);
         }
     }
-
-    @Override
-    public URL getResource(String s) {
-        return deferTo.getResource(s);
-    }
-
-    @Override
-    public InputStream getResourceAsStream(String s) {
-        return deferTo.getResourceAsStream(s);
-    }
-
-    @Override
-    public Enumeration<URL> getResources(String name) throws IOException {
-        // If deferTo is already the parent, then we'd end up returning two copies of each resource...
-        if (deferTo.equals(getParent()))
-            return deferTo.getResources(name);
-        else
-            return super.getResources(name);
-    }
-
-    protected boolean shouldModify(Iterable<String> packages, String name) {
-        return !shouldIgnore(packages, name);
-    }
-
-    protected abstract Class<?> loadModifiedClass(String s) throws ClassFormatError, ClassNotFoundException;
-
-    protected abstract boolean shouldModifyClass(String s);
-
-    protected abstract boolean shouldLoadUnmodifiedClass(String className);
-
-    /**
-     * Register a class to the cache of this classloader
-     */
-    public void cache(Class<?> cls) {
-        if (cls != null) {
-            classes.put(cls.getName(), new SoftReference<Class<?>>(cls));
+    
+    private Class<?> loadClass1(String name, boolean resolve) throws ClassNotFoundException {
+        Class<?> clazz;
+        if (shouldDefer(name)) {
+            clazz = deferTo.loadClass(name);
+        } else {
+            clazz = loadModifiedClass(name);
         }
+        if (resolve) {
+            resolveClass(clazz);
+        }
+        classes.put(name, new SoftReference<Class<?>>(clazz));
+        return clazz;
+    }
+    
+    private boolean shouldDefer(String name) {
+        return configuration.shouldDefer(name);
+    }
+    
+    private Class<?> findLoadedClass1(String name) {SoftReference<Class<?>> reference = classes.get(name);
+        Class<?> clazz = null;
+        if (reference != null) {
+            clazz = reference.get();
+        }
+        if (clazz == null) {
+            clazz = findLoadedClass(name);
+        }
+        return clazz;
     }
 }

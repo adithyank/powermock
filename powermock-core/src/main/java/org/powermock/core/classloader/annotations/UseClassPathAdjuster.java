@@ -18,7 +18,7 @@ package org.powermock.core.classloader.annotations;
 
 import java.lang.annotation.*;
 
-import org.powermock.core.classloader.ClassPathAdjuster;
+import org.powermock.core.classloader.javassist.ClassPathAdjuster;
 
 /**
  * Use this annotation to enable adjusting of the class path used by powermock

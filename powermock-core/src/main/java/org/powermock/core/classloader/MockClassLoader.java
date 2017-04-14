@@ -19,6 +19,8 @@ package org.powermock.core.classloader;
 import org.powermock.core.transformers.ClassWrapper;
 import org.powermock.core.transformers.ClassWrapperFactory;
 import org.powermock.core.transformers.MockTransformer;
+import org.powermock.core.transformers.MockTransformerChain;
+import org.powermock.core.transformers.javassist.support.ClassWrapperFactoryImpl;
 
 import java.security.ProtectionDomain;
 import java.util.List;
@@ -46,7 +48,7 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
     
     protected ClassMarker classMarker;
     protected ClassWrapperFactory classWrapperFactory;
-    private List<MockTransformer> mockTransformerChain;
+    private MockTransformerChain mockTransformerChain;
     
     /**
      * Creates a new instance of the  based on the
@@ -70,7 +72,7 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
      */
     protected MockClassLoader(MockClassLoaderConfiguration configuration) {
         super(MockClassLoader.class.getClassLoader(), configuration);
-        classWrapperFactory = new ClassWrapperFactory();
+        classWrapperFactory = new ClassWrapperFactoryImpl();
     }
     
     @Override
@@ -86,7 +88,7 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
         return loadedClass;
     }
     
-    public void setMockTransformerChain(List<MockTransformer> mockTransformerChain) {
+    public void setMockTransformerChain(MockTransformerChain mockTransformerChain) {
         this.mockTransformerChain = mockTransformerChain;
     }
     
@@ -96,9 +98,8 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
     protected abstract Class<?> loadMockClass(String name, ProtectionDomain protectionDomain);
     
     protected <T> ClassWrapper<T> transformClass(ClassWrapper<T> wrappedType) throws Exception {
-        for (MockTransformer transformer : mockTransformerChain) {
-            wrappedType = transformer.transform(wrappedType);
-        }
+        wrappedType = mockTransformerChain.transform(wrappedType);
+        
         if (classMarker != null) {
             classMarker.mark(wrappedType);
         }

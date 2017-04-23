@@ -18,12 +18,10 @@ package org.powermock.core.classloader;
 
 import org.powermock.core.transformers.ClassWrapper;
 import org.powermock.core.transformers.ClassWrapperFactory;
-import org.powermock.core.transformers.MockTransformer;
 import org.powermock.core.transformers.MockTransformerChain;
-import org.powermock.core.transformers.javassist.support.ClassWrapperFactoryImpl;
+import org.powermock.core.transformers.javassist.support.JavaAssistClassWrapperFactory;
 
 import java.security.ProtectionDomain;
-import java.util.List;
 
 /**
  * Mock all classes except system classes.
@@ -59,26 +57,33 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
      *                        class-loader.
      */
     protected MockClassLoader(String[] classesToMock, String[] packagesToDefer) {
-        this(new MockClassLoaderConfiguration(classesToMock, packagesToDefer));
+        this(new MockClassLoaderConfiguration(classesToMock, packagesToDefer), new JavaAssistClassWrapperFactory());
     }
     
     /**
      * Creates a new instance of the  based on the
      * following parameters:
      *
-     * @param configuration  The configuration of class loader. Configuration contains information about classes
-     *                       which should be loaded by class loader, defer to system and mocked.
+     * @param configuration The configuration of class loader. Configuration contains information about classes
+     *                      which should be loaded by class loader, defer to system and mocked.
+     * @param classWrapperFactory an instance of {@link ClassWrapperFactory} which is used to wrap internal framework's representation of
+     *                            the class into {@link ClassWrapper}
      * @see MockClassLoaderConfiguration
      */
-    protected MockClassLoader(MockClassLoaderConfiguration configuration) {
+    protected MockClassLoader(MockClassLoaderConfiguration configuration, final ClassWrapperFactory classWrapperFactory) {
         super(MockClassLoader.class.getClassLoader(), configuration);
-        classWrapperFactory = new ClassWrapperFactoryImpl();
+        this.classWrapperFactory = classWrapperFactory;
+        this.mockTransformerChain = new MockTransformerChain() {
+            @Override
+            public <T> ClassWrapper<T> transform(final ClassWrapper<T> clazz) throws Exception {
+                return clazz;
+            }
+        };
     }
     
     @Override
     protected Class<?> loadModifiedClass(String className) throws ClassFormatError, ClassNotFoundException {
-        Class<?> loadedClass;
-        
+        final Class<?> loadedClass;
         Class<?> deferClass = deferTo.loadClass(className);
         if (getConfiguration().shouldMockClass(className)) {
             loadedClass = loadMockClass(className, deferClass.getProtectionDomain());
@@ -92,10 +97,17 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
         this.mockTransformerChain = mockTransformerChain;
     }
     
-    protected abstract Class<?> loadUnmockedClass(String name,
-                                                  ProtectionDomain protectionDomain) throws ClassFormatError, ClassNotFoundException;
+    protected abstract Class<?> loadUnmockedClass(String name, ProtectionDomain protectionDomain) throws ClassFormatError, ClassNotFoundException;
     
-    protected abstract Class<?> loadMockClass(String name, ProtectionDomain protectionDomain);
+    private Class<?> loadMockClass(String name, ProtectionDomain protectionDomain) throws ClassNotFoundException {
+        final byte[] clazz = defineAndTransformClass(name);
+    
+        return defineClass(name, protectionDomain, clazz);
+    }
+    
+    protected Class<?> defineClass(final String name, final ProtectionDomain protectionDomain, final byte[] clazz) {
+        return defineClass(name, clazz, 0, clazz.length, protectionDomain);
+    }
     
     protected <T> ClassWrapper<T> transformClass(ClassWrapper<T> wrappedType) throws Exception {
         wrappedType = mockTransformerChain.transform(wrappedType);
@@ -105,4 +117,6 @@ public abstract class MockClassLoader extends DeferSupportingClassLoader {
         }
         return wrappedType;
     }
+    
+    protected abstract byte[] defineAndTransformClass(final String name) throws ClassNotFoundException;
 }
